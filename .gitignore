@@ -1,0 +1,13 @@
+node_modules/
+dist/
+backups/
+tokens/
+logs/
+storage/
+.DS_Store
+.env
+
+# Editor artifacts
+.vscode/
+.idea/
+*.swp

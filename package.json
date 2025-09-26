@@ -1,0 +1,59 @@
+{
+  "name": "youtube-mcp-extended",
+  "version": "0.0.1",
+  "description": "Extended YouTube MCP Server with AI-powered metadata optimization, strategic scheduling, and playlist management for Claude Desktop",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx agents/buildops/build-scripts.ts dev",
+    "dev:basic": "tsx watch src/index.ts",
+    "build": "tsx agents/buildops/build-scripts.ts build",
+    "build:basic": "tsc",
+    "build:watch": "tsx agents/buildops/build-scripts.ts watch",
+    "build:deploy": "tsx agents/buildops/build-scripts.ts deploy",
+    "start": "node dist/index.js",
+    "start:dev": "tsx watch src/index.ts",
+    "start:prod": "NODE_ENV=production node dist/index.js",
+    "validate:env": "tsx agents/buildops/env-validator.ts",
+    "lint": "eslint src --ext .ts --report-unused-disable-directives --max-warnings 0",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write 'src/**/*.ts'",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "youtube",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "ai",
+    "metadata",
+    "scheduling",
+    "automation"
+  ],
+  "author": "Dennis Westermann (aiEX Academy)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "google-auth-library": "^9.0.0",
+    "googleapis": "^130.0.0",
+    "uuid": "^9.0.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@vitest/coverage-v8": "^1.6.1",
+    "eslint": "^8.56.0",
+    "prettier": "^3.1.0",
+    "tsx": "^4.6.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.1.0"
+  }
+}
