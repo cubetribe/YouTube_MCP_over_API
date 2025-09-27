@@ -1,6 +1,6 @@
 {
   "name": "youtube-mcp-extended",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Extended YouTube MCP Server with AI-powered metadata optimization, strategic scheduling, and playlist management for Claude Desktop",
   "main": "dist/index.js",
   "type": "module",
