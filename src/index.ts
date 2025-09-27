@@ -29,6 +29,9 @@ import {
   BackupVideoMetadataSchema,
   RestoreVideoMetadataSchema,
   GetBatchStatusSchema,
+  GenerateThumbnailConceptsSchema,
+  GetConfigurationStatusSchema,
+  ReloadConfigurationSchema,
   MCPError,
   AuthenticationError,
   type ApplyMetadataInput,
@@ -47,16 +50,19 @@ import { PlaylistService } from './playlist/playlist-service.js';
 import { backupService } from './backup/backup-service.js';
 import { batchManager } from './batch/batch-manager.js';
 import { BatchOrchestrator, type BatchExecutionItem } from './batch/batch-orchestrator.js';
+import { thumbnailConceptService } from './thumbnail/thumbnail-concept-service.js';
+import { getConfig, getFeatureFlags, ConfigValidator, formatValidationResults, configManager } from './config/index.js';
 // Logger disabled - MCP servers must not write to stdout
 
+// Initialize configuration and create server with config values
+const config = getConfig();
 const server = new Server(
-  { name: 'youtube-mcp-extended', version: '1.0.0' },
   {
-    capabilities: {
-      tools: { listChanged: true },
-      resources: { listChanged: true, subscribe: true },
-      prompts: { listChanged: false },
-    },
+    name: config.mcpServer.name,
+    version: config.mcpServer.version
+  },
+  {
+    capabilities: config.mcpServer.capabilities,
   }
 );
 
@@ -130,6 +136,21 @@ const TOOLS = [
     description: 'Liest den Fortschritt eines Batch-Prozesses aus.',
     inputSchema: zodToJsonSchema(GetBatchStatusSchema),
   },
+  {
+    name: 'generate_thumbnail_concepts',
+    description: 'Generiert Thumbnail-Konzeptvorschläge basierend auf Video-Inhalten und Transkript.',
+    inputSchema: zodToJsonSchema(GenerateThumbnailConceptsSchema),
+  },
+  {
+    name: 'get_configuration_status',
+    description: 'Zeigt den aktuellen Konfigurationsstatus mit Validierung und Feature-Flags.',
+    inputSchema: zodToJsonSchema(GetConfigurationStatusSchema),
+  },
+  {
+    name: 'reload_configuration',
+    description: 'Lädt die Konfiguration neu und validiert sie.',
+    inputSchema: zodToJsonSchema(ReloadConfigurationSchema),
+  },
 ];
 
 const RESOURCES = [
@@ -138,6 +159,8 @@ const RESOURCES = [
   { uri: 'youtube://playlists', name: 'Playlists', description: 'Playlists des Kanals', mimeType: 'application/json' },
   { uri: 'backups://list', name: 'Backups', description: 'Verfügbare Metadaten-Backups', mimeType: 'application/json' },
   { uri: 'batch://status/{batchId}', name: 'Batch Status', description: 'Status eines Batch-Vorgangs', mimeType: 'application/json' },
+  { uri: 'config://status', name: 'Configuration Status', description: 'Aktueller Konfigurationsstatus und Validierung', mimeType: 'application/json' },
+  { uri: 'config://features', name: 'Feature Flags', description: 'Status aller Feature-Flags', mimeType: 'application/json' },
 ];
 
 function resolveSessionKey(extra: any): string {
@@ -360,7 +383,15 @@ function buildPlaylistBatchItems(params: {
 async function getYouTubeClient(): Promise<{ client: YouTubeClient; oauthClient: any }> {
   try {
     const oauthClient = await oauthService.getAuthorizedClient();
-    const client = new YouTubeClient({ oauthClient });
+    const config = getConfig();
+
+    const client = new YouTubeClient({
+      oauthClient,
+      quotaLimit: config.youtubeAPI.quotaLimit,
+      rateLimiter: {
+        maxRequestsPerMinute: config.youtubeAPI.rateLimitRequestsPerMinute,
+      },
+    });
     return { client, oauthClient };
   } catch (error) {
     throw new AuthenticationError(error instanceof Error ? error.message : String(error));
@@ -464,6 +495,99 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     return {
       contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(batch, null, 2) }],
     };
+  }
+
+  if (uri === 'config://status') {
+    try {
+      const config = getConfig();
+      const validation = ConfigValidator.validateAppConfig(config);
+      const issuesValidation = ConfigValidator.checkCommonIssues(config);
+
+      const status = {
+        isValid: validation.isValid && issuesValidation.isValid,
+        environment: config.env,
+        timestamp: new Date().toISOString(),
+        validation: {
+          config: validation,
+          issues: issuesValidation,
+        },
+        summary: {
+          oauth: {
+            configured: !!(config.oauth.clientId && config.oauth.clientSecret),
+            scopes: config.oauth.scopes.length,
+            redirectUri: config.oauth.redirectUri,
+          },
+          storage: {
+            backupDir: config.storage.backupDir,
+            metadataSuggestionsDir: config.storage.metadataSuggestionsDir,
+            tempDir: config.storage.tempDir,
+          },
+          api: {
+            quotaLimit: config.youtubeAPI.quotaLimit,
+            rateLimitRPS: config.youtubeAPI.rateLimitRequestsPerSecond,
+            rateLimitRPM: config.youtubeAPI.rateLimitRequestsPerMinute,
+          },
+          logging: {
+            level: config.logging.level,
+            enableConsole: config.logging.enableConsole,
+            enableFile: config.logging.enableFile,
+          },
+          security: {
+            encryptionEnabled: !!config.security.encryptionSecret,
+            tokenStorageDir: config.security.tokenStorageDir,
+          },
+        },
+      };
+
+      return {
+        contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(status, null, 2) }],
+      };
+    } catch (error) {
+      return {
+        contents: [{
+          uri,
+          mimeType: 'application/json',
+          text: JSON.stringify({
+            isValid: false,
+            error: error instanceof Error ? error.message : String(error),
+            timestamp: new Date().toISOString(),
+          }, null, 2)
+        }],
+      };
+    }
+  }
+
+  if (uri === 'config://features') {
+    try {
+      const featureFlags = getFeatureFlags();
+      const allFlags = featureFlags.getAllFlags();
+      const summary = featureFlags.getSummary();
+      const deprecated = featureFlags.getDeprecatedFlags();
+
+      const status = {
+        summary,
+        deprecated,
+        flags: allFlags,
+        enabled: featureFlags.getEnabledFlags(),
+        disabled: featureFlags.getDisabledFlags(),
+        timestamp: new Date().toISOString(),
+      };
+
+      return {
+        contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(status, null, 2) }],
+      };
+    } catch (error) {
+      return {
+        contents: [{
+          uri,
+          mimeType: 'application/json',
+          text: JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            timestamp: new Date().toISOString(),
+          }, null, 2)
+        }],
+      };
+    }
   }
 
   throw new MCPError(`Resource ${uri} wird nicht unterstützt`, 'RESOURCE_NOT_FOUND');
@@ -824,6 +948,240 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return {
           content: [{ type: 'text', text: JSON.stringify(batch, null, 2) }],
         };
+      }
+
+      case 'generate_thumbnail_concepts': {
+        const input = GenerateThumbnailConceptsSchema.parse(args);
+        const { client, oauthClient } = await getYouTubeClient();
+        const videos = await client.getVideoDetails(input.videoId);
+        if (videos.length === 0) throw new MCPError('Video nicht gefunden', 'VIDEO_NOT_FOUND');
+        const video = videos[0];
+
+        let transcript: any;
+        if (input.includeTranscript) {
+          const manager = new TranscriptManager(oauthClient);
+          const result = await manager.getTranscript(input.videoId);
+          transcript = result.transcript;
+        }
+
+        const concepts = thumbnailConceptService.generateConcepts({
+          videoId: video.id,
+          title: video.title,
+          description: video.description,
+          tags: video.tags,
+          transcript,
+          category: video.categoryId,
+          duration: video.duration,
+        });
+
+        return {
+          content: [{ type: 'text', text: JSON.stringify(concepts, null, 2) }],
+        };
+      }
+
+      case 'get_configuration_status': {
+        const input = GetConfigurationStatusSchema.parse(args);
+
+        try {
+          const config = getConfig();
+          let responseData: any = {
+            timestamp: new Date().toISOString(),
+            environment: config.env,
+          };
+
+          // Include validation if requested
+          if (input.includeValidation) {
+            const configValidation = ConfigValidator.validateAppConfig(config);
+            const issuesValidation = ConfigValidator.checkCommonIssues(config);
+
+            responseData.validation = {
+              isValid: configValidation.isValid && issuesValidation.isValid,
+              config: {
+                isValid: configValidation.isValid,
+                errors: configValidation.errors.map(e => ({
+                  field: e.field,
+                  message: e.message,
+                  suggestions: e.suggestions,
+                })),
+                warnings: configValidation.warnings,
+                suggestions: configValidation.suggestions,
+              },
+              issues: {
+                isValid: issuesValidation.isValid,
+                errors: issuesValidation.errors.map(e => ({
+                  field: e.field,
+                  message: e.message,
+                  suggestions: e.suggestions,
+                })),
+                warnings: issuesValidation.warnings,
+                suggestions: issuesValidation.suggestions,
+              },
+            };
+          }
+
+          // Include environment variables if requested (filtered)
+          if (input.includeEnvironment) {
+            const env = configManager.getEnv();
+            // Only include non-sensitive environment variables
+            responseData.environment_info = {
+              NODE_ENV: env.NODE_ENV,
+              LOG_LEVEL: env.LOG_LEVEL,
+              MCP_SERVER_NAME: env.MCP_SERVER_NAME,
+              MCP_SERVER_VERSION: env.MCP_SERVER_VERSION,
+              // Redact sensitive values
+              YOUTUBE_CLIENT_ID: env.YOUTUBE_CLIENT_ID ? '***CONFIGURED***' : undefined,
+              YOUTUBE_CLIENT_SECRET: env.YOUTUBE_CLIENT_SECRET ? '***CONFIGURED***' : undefined,
+              OAUTH_ENCRYPTION_SECRET: env.OAUTH_ENCRYPTION_SECRET ? '***CONFIGURED***' : undefined,
+            };
+          }
+
+          // Filter by section if specified
+          if (input.section !== 'all') {
+            switch (input.section) {
+              case 'oauth':
+                responseData.oauth = {
+                  configured: !!(config.oauth.clientId && config.oauth.clientSecret),
+                  scopes: config.oauth.scopes,
+                  redirectUri: config.oauth.redirectUri,
+                };
+                break;
+              case 'security':
+                responseData.security = {
+                  encryptionEnabled: !!config.security.encryptionSecret,
+                  tokenStorageDir: config.security.tokenStorageDir,
+                };
+                break;
+              case 'mcpServer':
+                responseData.mcpServer = config.mcpServer;
+                break;
+              case 'youtubeAPI':
+                responseData.youtubeAPI = config.youtubeAPI;
+                break;
+              case 'storage':
+                responseData.storage = config.storage;
+                break;
+              case 'logging':
+                responseData.logging = config.logging;
+                break;
+            }
+          } else {
+            // Include all sections
+            responseData.config = {
+              oauth: {
+                configured: !!(config.oauth.clientId && config.oauth.clientSecret),
+                scopes: config.oauth.scopes.length,
+                redirectUri: config.oauth.redirectUri,
+              },
+              security: {
+                encryptionEnabled: !!config.security.encryptionSecret,
+                tokenStorageDir: config.security.tokenStorageDir,
+              },
+              mcpServer: config.mcpServer,
+              youtubeAPI: config.youtubeAPI,
+              storage: config.storage,
+              logging: config.logging,
+            };
+
+            // Include feature flags summary
+            const featureFlags = getFeatureFlags();
+            responseData.features = featureFlags.getSummary();
+          }
+
+          return {
+            content: [{ type: 'text', text: JSON.stringify(responseData, null, 2) }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+                timestamp: new Date().toISOString(),
+              }, null, 2)
+            }],
+          };
+        }
+      }
+
+      case 'reload_configuration': {
+        const input = ReloadConfigurationSchema.parse(args);
+
+        try {
+          const oldConfig = getConfig();
+
+          // Reload the configuration
+          const newConfig = configManager.reload();
+
+          let responseData: any = {
+            success: true,
+            timestamp: new Date().toISOString(),
+            reloadedAt: new Date().toISOString(),
+            environment: newConfig.env,
+            changes: {
+              environmentChanged: oldConfig.env !== newConfig.env,
+              mcpServerConfigChanged: JSON.stringify(oldConfig.mcpServer) !== JSON.stringify(newConfig.mcpServer),
+              youtubeAPIConfigChanged: JSON.stringify(oldConfig.youtubeAPI) !== JSON.stringify(newConfig.youtubeAPI),
+              storageConfigChanged: JSON.stringify(oldConfig.storage) !== JSON.stringify(newConfig.storage),
+              loggingConfigChanged: JSON.stringify(oldConfig.logging) !== JSON.stringify(newConfig.logging),
+              oauthConfigChanged: JSON.stringify(oldConfig.oauth) !== JSON.stringify(newConfig.oauth),
+              securityConfigChanged: JSON.stringify(oldConfig.security) !== JSON.stringify(newConfig.security),
+            },
+          };
+
+          // Validate after reload if requested
+          if (input.validateAfterReload) {
+            const configValidation = ConfigValidator.validateAppConfig(newConfig);
+            const issuesValidation = ConfigValidator.checkCommonIssues(newConfig);
+
+            responseData.validation = {
+              isValid: configValidation.isValid && issuesValidation.isValid,
+              config: {
+                isValid: configValidation.isValid,
+                errors: configValidation.errors.map(e => ({
+                  field: e.field,
+                  message: e.message,
+                  suggestions: e.suggestions,
+                })),
+                warnings: configValidation.warnings,
+                suggestions: configValidation.suggestions,
+              },
+              issues: {
+                isValid: issuesValidation.isValid,
+                errors: issuesValidation.errors.map(e => ({
+                  field: e.field,
+                  message: e.message,
+                  suggestions: e.suggestions,
+                })),
+                warnings: issuesValidation.warnings,
+                suggestions: issuesValidation.suggestions,
+              },
+            };
+          }
+
+          // Notify services if requested (placeholder for future implementation)
+          if (input.notifyServices) {
+            responseData.serviceNotifications = {
+              notified: [],
+              warnings: ['Service notification not yet implemented'],
+            };
+          }
+
+          return {
+            content: [{ type: 'text', text: JSON.stringify(responseData, null, 2) }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+                timestamp: new Date().toISOString(),
+              }, null, 2)
+            }],
+          };
+        }
       }
 
       default:

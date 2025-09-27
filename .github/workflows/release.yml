@@ -1,0 +1,312 @@
+# YouTube MCP Extended - Release Automation
+name: Release Automation
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  NODE_VERSION: '20'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Create GitHub release
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release-id: ${{ steps.create-release.outputs.id }}
+      upload-url: ${{ steps.create-release.outputs.upload_url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "Generating changelog from $PREVIOUS_TAG to ${{ github.ref_name }}"
+            CHANGELOG=$(git log --pretty=format:"* %s (%h)" $PREVIOUS_TAG..${{ github.ref_name }})
+          else
+            echo "Generating changelog for first release"
+            CHANGELOG=$(git log --pretty=format:"* %s (%h)")
+          fi
+
+          # Save changelog to file
+          echo "## What's Changed" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "$CHANGELOG" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...${{ github.ref_name }}" >> CHANGELOG.md
+
+      - name: Create Release
+        id: create-release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: YouTube MCP Extended ${{ github.ref_name }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # Build and package
+  build-release:
+    name: Build Release
+    runs-on: ubuntu-latest
+    needs: create-release
+    strategy:
+      matrix:
+        platform: [linux-x64, linux-arm64, win-x64, darwin-x64, darwin-arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build:deploy
+
+      - name: Package application
+        run: |
+          # Create platform-specific package
+          PLATFORM="${{ matrix.platform }}"
+          VERSION="${{ github.ref_name }}"
+          PACKAGE_NAME="youtube-mcp-extended-${VERSION}-${PLATFORM}"
+
+          mkdir -p "packages/${PACKAGE_NAME}"
+
+          # Copy built application
+          cp -r dist/ "packages/${PACKAGE_NAME}/"
+          cp package.json "packages/${PACKAGE_NAME}/"
+          cp package-lock.json "packages/${PACKAGE_NAME}/"
+          cp README.md "packages/${PACKAGE_NAME}/"
+          cp CHANGELOG.md "packages/${PACKAGE_NAME}/"
+
+          # Create installation script
+          cat > "packages/${PACKAGE_NAME}/install.sh" << 'EOF'
+          #!/bin/bash
+          set -e
+
+          echo "Installing YouTube MCP Extended..."
+
+          # Install Node.js dependencies
+          npm ci --production
+
+          # Create necessary directories
+          mkdir -p tokens backups storage logs
+
+          # Set permissions
+          chmod +x dist/index.js
+
+          echo "Installation complete!"
+          echo "To start the server, run: npm start"
+          EOF
+
+          chmod +x "packages/${PACKAGE_NAME}/install.sh"
+
+          # Create archive
+          cd packages
+          tar -czf "${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}/"
+          cd ..
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload-url }}
+          asset_path: packages/youtube-mcp-extended-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz
+          asset_name: youtube-mcp-extended-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz
+          asset_content_type: application/gzip
+
+  # Build and push Docker images
+  docker-release:
+    name: Docker Release
+    runs-on: ubuntu-latest
+    needs: create-release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: production
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Publish to npm (if applicable)
+  npm-release:
+    name: Publish to NPM
+    runs-on: ubuntu-latest
+    needs: create-release
+    if: github.repository_owner == 'your-org' # Replace with your organization
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Publish to NPM
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Update documentation
+  update-docs:
+    name: Update Documentation
+    runs-on: ubuntu-latest
+    needs: [build-release, docker-release]
+    if: always() && needs.build-release.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Update version in documentation
+        run: |
+          VERSION="${{ github.ref_name }}"
+
+          # Update README.md version badge
+          sed -i "s/version-[0-9.]*/version-${VERSION#v}/g" README.md
+
+          # Update Docker examples in documentation
+          find docs/ -name "*.md" -exec sed -i "s/:v[0-9.]*/:${VERSION}/g" {} + || true
+          find docs/ -name "*.md" -exec sed -i "s/:latest/:${VERSION}/g" {} + || true
+
+      - name: Commit documentation updates
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git diff --staged --quiet || git commit -m "docs: update version references to ${{ github.ref_name }}"
+          git push
+
+  # Post-release tasks
+  post-release:
+    name: Post-Release Tasks
+    runs-on: ubuntu-latest
+    needs: [build-release, docker-release, npm-release, update-docs]
+    if: always()
+    steps:
+      - name: Notify team
+        uses: 8398a7/action-slack@v3
+        if: always()
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "🚀 YouTube MCP Extended ${{ github.ref_name }} has been released!",
+              "attachments": [
+                {
+                  "color": "${{ contains(needs.*.result, 'failure') && 'danger' || 'good' }}",
+                  "fields": [
+                    {
+                      "title": "Release",
+                      "value": "${{ github.ref_name }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Status",
+                      "value": "${{ contains(needs.*.result, 'failure') && 'Failed' || 'Success' }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Repository",
+                      "value": "${{ github.repository }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Release Notes",
+                      "value": "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}",
+                      "short": true
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Create next development version
+        if: success()
+        run: |
+          echo "Release ${{ github.ref_name }} completed successfully!"
+          echo "Consider creating a new development branch or updating version numbers for next release."

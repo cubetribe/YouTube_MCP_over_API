@@ -169,6 +169,24 @@ export const GetBatchStatusSchema = z.object({
   batchId: z.string().min(1, 'Batch ID is required'),
 });
 
+export const GenerateThumbnailConceptsSchema = z.object({
+  videoId: z.string().min(1, 'Video ID is required'),
+  includeTranscript: z.boolean().optional().default(true),
+  conceptCount: z.number().int().min(1).max(10).optional().default(5),
+  optimizeFor: z.enum(['engagement', 'curiosity', 'authority', 'emotion']).optional().default('engagement'),
+});
+
+export const GetConfigurationStatusSchema = z.object({
+  includeValidation: z.boolean().optional().default(true),
+  includeEnvironment: z.boolean().optional().default(false),
+  section: z.enum(['oauth', 'security', 'mcpServer', 'youtubeAPI', 'storage', 'logging', 'all']).optional().default('all'),
+});
+
+export const ReloadConfigurationSchema = z.object({
+  validateAfterReload: z.boolean().optional().default(true),
+  notifyServices: z.boolean().optional().default(false),
+});
+
 /**
  * Metadata suggestion structures.
  */
@@ -284,6 +302,9 @@ export type MCPToolInput =
   | z.infer<typeof OrganizePlaylistsSchema>
   | z.infer<typeof BackupVideoMetadataSchema>
   | z.infer<typeof RestoreVideoMetadataSchema>
-  | z.infer<typeof GetBatchStatusSchema>;
+  | z.infer<typeof GetBatchStatusSchema>
+  | z.infer<typeof GenerateThumbnailConceptsSchema>
+  | z.infer<typeof GetConfigurationStatusSchema>
+  | z.infer<typeof ReloadConfigurationSchema>;
 
 export type ApplyMetadataInput = z.infer<typeof ApplyMetadataSchema>;

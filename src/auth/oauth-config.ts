@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { getOAuthConfig, getSecurityConfig } from '../config/index.js';
 
 export interface OAuthConfigOptions {
   clientId: string;
@@ -90,34 +91,55 @@ export class OAuthConfigManager {
   }
 
   private loadConfig(): OAuthConfigOptions {
-    const env = process.env;
-    const clientId = env['YOUTUBE_CLIENT_ID'] || env['GOOGLE_CLIENT_ID'];
-    const clientSecret = env['YOUTUBE_CLIENT_SECRET'] || env['GOOGLE_CLIENT_SECRET'];
-    if (!clientId || !clientSecret) {
-      throw new Error('OAuth not configured: Missing YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET environment variables');
+    try {
+      // Use new configuration management system
+      const oauthConfig = getOAuthConfig();
+      return {
+        clientId: oauthConfig.clientId,
+        clientSecret: oauthConfig.clientSecret,
+        redirectUri: oauthConfig.redirectUri,
+        scopes: oauthConfig.scopes,
+      };
+    } catch (error) {
+      // Fallback to old environment variable loading for backward compatibility
+      const env = process.env;
+      const clientId = env['YOUTUBE_CLIENT_ID'] || env['GOOGLE_CLIENT_ID'];
+      const clientSecret = env['YOUTUBE_CLIENT_SECRET'] || env['GOOGLE_CLIENT_SECRET'];
+      if (!clientId || !clientSecret) {
+        throw new Error('OAuth not configured: Missing YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET environment variables');
+      }
+
+      const redirectUri = env['YOUTUBE_REDIRECT_URI'] || env['GOOGLE_REDIRECT_URI'] || 'http://localhost:3000/callback';
+      const scopes = this.parseScopes(
+        env['YOUTUBE_OAUTH_SCOPES'] || env['GOOGLE_OAUTH_SCOPES'] || [
+          'https://www.googleapis.com/auth/youtube',
+          'https://www.googleapis.com/auth/youtube.upload',
+          'https://www.googleapis.com/auth/youtubepartner-channel-audit',
+        ]
+      );
+
+      return {
+        clientId,
+        clientSecret,
+        redirectUri,
+        scopes,
+      };
     }
-
-    const redirectUri = env['YOUTUBE_REDIRECT_URI'] || env['GOOGLE_REDIRECT_URI'] || 'http://localhost:3000/callback';
-    const scopes = this.parseScopes(
-      env['YOUTUBE_OAUTH_SCOPES'] || env['GOOGLE_OAUTH_SCOPES'] || [
-        'https://www.googleapis.com/auth/youtube',
-        'https://www.googleapis.com/auth/youtube.upload',
-        'https://www.googleapis.com/auth/youtubepartner-channel-audit',
-      ]
-    );
-
-    return {
-      clientId,
-      clientSecret,
-      redirectUri,
-      scopes,
-    };
   }
 
   private initializeEncryption(): Buffer | undefined {
-    const secret = process.env['OAUTH_ENCRYPTION_SECRET'];
-    if (!secret) return undefined;
-    return crypto.scryptSync(secret, 'youtube-mcp-salt', 32);
+    try {
+      // Use new configuration management system
+      const securityConfig = getSecurityConfig();
+      const secret = securityConfig.encryptionSecret;
+      if (!secret) return undefined;
+      return crypto.scryptSync(secret, 'youtube-mcp-salt', 32);
+    } catch (error) {
+      // Fallback to old environment variable loading
+      const secret = process.env['OAUTH_ENCRYPTION_SECRET'];
+      if (!secret) return undefined;
+      return crypto.scryptSync(secret, 'youtube-mcp-salt', 32);
+    }
   }
 }
 

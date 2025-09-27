@@ -1,6 +1,8 @@
 import type { MetadataSuggestion, TimestampEntry } from '../types/index.js';
 import type { ParsedTranscript } from '../transcript/transcript-manager.js';
 import { TimestampFormatter } from '../utils/timestamp-utils.js';
+import { auditLogger } from '../lib/audit-logger.js';
+import { logger } from '../lib/logger.js';
 
 export interface MetadataSource {
   videoId: string;
@@ -11,7 +13,14 @@ export interface MetadataSource {
 }
 
 export class MetadataService {
-  generateSuggestion(source: MetadataSource): MetadataSuggestion {
+  generateSuggestion(source: MetadataSource, options: { userId?: string; correlationId?: string } = {}): MetadataSuggestion {
+    logger.info(`Generating metadata suggestion for video ${source.videoId}`, 'metadata', {
+      videoId: source.videoId,
+      userId: options.userId,
+      correlationId: options.correlationId,
+      hasTranscript: !!source.transcript,
+      segmentCount: source.transcript?.segments.length || 0
+    });
     const timestampEntries: TimestampEntry[] = (source.transcript?.segments || [])
       .filter(segment => segment.text.trim().length > 0)
       .slice(0, 10)
@@ -46,7 +55,7 @@ export class MetadataService {
       'Rufe `apply_metadata` mit `suggestionId` und `acknowledgedGuardrails=true` auf, um die Änderungen zu übernehmen.',
     ];
 
-    return {
+    const suggestion = {
       videoId: source.videoId,
       generatedAt: new Date().toISOString(),
       originalTitle: source.title,
@@ -77,6 +86,31 @@ export class MetadataService {
       reviewChecklist,
       recommendedNextSteps,
     };
+
+    // Log the metadata suggestion generation
+    auditLogger.logMetadataChange({
+      videoId: source.videoId,
+      userId: options.userId,
+      action: 'generate_suggestion',
+      oldValues: {
+        title: source.title,
+        description: source.description,
+        tags: source.tags
+      },
+      newValues: {
+        title: suggestedTitle,
+        description: suggestedDescription,
+        tags: suggestedTags
+      },
+      correlationId: options.correlationId,
+      metadata: {
+        overallConfidence: suggestion.overallConfidence,
+        timestampCount: timestampEntries.length,
+        keywordCount: keywords.length
+      }
+    });
+
+    return suggestion;
   }
 
   private buildGuardrails(input: {
@@ -139,6 +173,80 @@ export class MetadataService {
       .sort((a, b) => b[1] - a[1])
       .map(([word]) => word)
       .slice(0, 10);
+  }
+
+  /**
+   * Apply metadata changes to a video and log the action
+   */
+  logMetadataApplication(
+    videoId: string,
+    oldMetadata: { title: string; description: string; tags: string[]; privacyStatus?: string },
+    newMetadata: { title?: string; description?: string; tags?: string[]; privacyStatus?: string },
+    options: {
+      userId?: string;
+      suggestionId?: string;
+      guardrailsAcknowledged?: boolean;
+      correlationId?: string;
+    } = {}
+  ): void {
+    auditLogger.logMetadataChange({
+      videoId,
+      userId: options.userId,
+      action: 'apply_metadata',
+      oldValues: oldMetadata,
+      newValues: newMetadata,
+      suggestionId: options.suggestionId,
+      guardrailsAcknowledged: options.guardrailsAcknowledged,
+      correlationId: options.correlationId
+    });
+
+    logger.info(`Metadata applied to video ${videoId}`, 'metadata', {
+      videoId,
+      suggestionId: options.suggestionId,
+      guardrailsAcknowledged: options.guardrailsAcknowledged,
+      changedFields: {
+        title: newMetadata.title !== oldMetadata.title,
+        description: newMetadata.description !== oldMetadata.description,
+        tags: JSON.stringify(newMetadata.tags) !== JSON.stringify(oldMetadata.tags),
+        privacyStatus: newMetadata.privacyStatus !== oldMetadata.privacyStatus
+      },
+      userId: options.userId,
+      correlationId: options.correlationId
+    });
+  }
+
+  /**
+   * Log when a suggestion is rejected
+   */
+  logSuggestionRejection(
+    videoId: string,
+    suggestionId: string,
+    reason?: string,
+    options: { userId?: string; correlationId?: string } = {}
+  ): void {
+    auditLogger.logMetadataChange({
+      videoId,
+      userId: options.userId,
+      action: 'reject_suggestion',
+      suggestionId,
+      correlationId: options.correlationId,
+      metadata: { rejectionReason: reason }
+    });
+
+    logger.info(`Metadata suggestion rejected for video ${videoId}`, 'metadata', {
+      videoId,
+      suggestionId,
+      rejectionReason: reason,
+      userId: options.userId,
+      correlationId: options.correlationId
+    });
+  }
+
+  /**
+   * Get metadata change history for a video
+   */
+  async getMetadataHistory(videoId: string, since?: Date): Promise<any[]> {
+    return auditLogger.getVideoMetadataHistory(videoId, since);
   }
 
   private buildTitle(originalTitle: string, keywords: string[]): string {
