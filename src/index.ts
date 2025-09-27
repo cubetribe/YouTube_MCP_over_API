@@ -5,6 +5,7 @@ import process from 'process';
 import { google } from 'googleapis';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
   CallToolRequestSchema,
   ListResourcesRequestSchema,
@@ -46,7 +47,7 @@ import { PlaylistService } from './playlist/playlist-service.js';
 import { backupService } from './backup/backup-service.js';
 import { batchManager } from './batch/batch-manager.js';
 import { BatchOrchestrator, type BatchExecutionItem } from './batch/batch-orchestrator.js';
-import { logger } from './lib/logger.js';
+// Logger disabled - MCP servers must not write to stdout
 
 const server = new Server(
   { name: 'youtube-mcp-extended', version: '1.0.0' },
@@ -67,67 +68,67 @@ const TOOLS = [
   {
     name: 'start_oauth_flow',
     description: 'Generiert einen OAuth-Link zur Anmeldung bei Google und liefert PKCE-Verifier.',
-    inputSchema: StartOAuthFlowSchema,
+    inputSchema: zodToJsonSchema(StartOAuthFlowSchema),
   },
   {
     name: 'complete_oauth_flow',
     description: 'Schliesst den OAuth-Prozess mit Code & State ab und speichert Tokens.',
-    inputSchema: CompleteOAuthFlowSchema,
+    inputSchema: zodToJsonSchema(CompleteOAuthFlowSchema),
   },
   {
     name: 'list_videos',
     description: 'Listet Videos des authentifizierten Kanals mit Metadaten.',
-    inputSchema: ListVideosSchema,
+    inputSchema: zodToJsonSchema(ListVideosSchema),
   },
   {
     name: 'get_video_transcript',
     description: 'Lädt das YouTube-Transkript (falls verfügbar).',
-    inputSchema: GetVideoTranscriptSchema,
+    inputSchema: zodToJsonSchema(GetVideoTranscriptSchema),
   },
   {
     name: 'generate_metadata_suggestions',
     description: 'Erzeugt Metadaten-Vorschläge basierend auf Beschreibung/Transkript.',
-    inputSchema: GenerateMetadataSuggestionsSchema,
+    inputSchema: zodToJsonSchema(GenerateMetadataSuggestionsSchema),
   },
   {
     name: 'apply_metadata',
     description: 'Wendet Metadaten auf ein Video an und erstellt optional ein Backup.',
-    inputSchema: ApplyMetadataSchema,
+    inputSchema: zodToJsonSchema(ApplyMetadataSchema),
   },
   {
     name: 'schedule_videos',
     description: 'Erstellt einen Veröffentlichungsplan und kann ihn optional anwenden.',
-    inputSchema: ScheduleVideosSchema,
+    inputSchema: zodToJsonSchema(ScheduleVideosSchema),
   },
   {
     name: 'create_playlist',
     description: 'Legt eine neue Playlist an.',
-    inputSchema: CreatePlaylistSchema,
+    inputSchema: zodToJsonSchema(CreatePlaylistSchema),
   },
   {
     name: 'add_videos_to_playlist',
     description: 'Fügt Videos zu einer bestehenden Playlist hinzu.',
-    inputSchema: AddVideosToPlaylistSchema,
+    inputSchema: zodToJsonSchema(AddVideosToPlaylistSchema),
   },
   {
     name: 'organize_playlists',
     description: 'Organisiert Videos automatisch in Playlists (manuell oder nach Kategorie).',
-    inputSchema: OrganizePlaylistsSchema,
+    inputSchema: zodToJsonSchema(OrganizePlaylistsSchema),
   },
   {
     name: 'backup_video_metadata',
     description: 'Erstellt JSON-Backups der Videometadaten.',
-    inputSchema: BackupVideoMetadataSchema,
+    inputSchema: zodToJsonSchema(BackupVideoMetadataSchema),
   },
   {
     name: 'restore_video_metadata',
     description: 'Stellt Metadaten aus einem Backup wieder her.',
-    inputSchema: RestoreVideoMetadataSchema,
+    inputSchema: zodToJsonSchema(RestoreVideoMetadataSchema),
   },
   {
     name: 'get_batch_status',
     description: 'Liest den Fortschritt eines Batch-Prozesses aus.',
-    inputSchema: GetBatchStatusSchema,
+    inputSchema: zodToJsonSchema(GetBatchStatusSchema),
   },
 ];
 
@@ -171,12 +172,10 @@ function notifyResourceSubscribers(uri: string): void {
   if (!hasSubscribers(uri)) return;
   void server
     .sendResourceUpdated({ uri })
-    .catch((error) =>
-      logger.warn('Senden von resources/updated fehlgeschlagen', {
-        uri,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    );
+    .catch(() => {
+      // Silent catch - MCP servers must not log to stdout/stderr
+      // Error is non-critical for resource updates
+    });
 }
 
 batchOrchestrator.setUpdateListener((batch) => {
@@ -434,7 +433,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   }
 
   if (uri === 'youtube://channels/mine') {
-    const { client, oauthClient } = await getYouTubeClient();
+    const { oauthClient } = await getYouTubeClient();
     const youtube = google.youtube({ version: 'v3', auth: oauthClient });
     const response = await youtube.channels.list({ part: ['snippet', 'statistics'], mine: true });
     return {
@@ -523,7 +522,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const videos = await client.getVideoDetails(input.videoId);
         if (videos.length === 0) throw new MCPError('Video nicht gefunden', 'VIDEO_NOT_FOUND');
         const video = videos[0];
-        let transcript;
+        let transcript: any;
         if (input.includeTranscript) {
           const manager = new TranscriptManager(oauthClient);
           const result = await manager.getTranscript(input.videoId);
@@ -560,7 +559,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'apply_metadata': {
         const input = ApplyMetadataSchema.parse(args);
         const { client } = await getYouTubeClient();
-        let suggestionRecord;
+        let suggestionRecord: MetadataSuggestionRecord | undefined;
         if (input.suggestionId) {
           suggestionRecord = await metadataReviewStore.getSuggestion(input.suggestionId);
           if (!suggestionRecord) throw new MCPError('Vorschlag nicht gefunden', 'SUGGESTION_NOT_FOUND');
@@ -831,7 +830,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new MCPError(`Tool ${name} ist unbekannt`, 'UNKNOWN_TOOL');
     }
   } catch (error) {
-    logger.error(`Fehler bei Tool ${name}`, error);
+    // DO NOT log to stdout/stderr in MCP servers!
+    // logger.error(`Fehler bei Tool ${name}`, error);
     if (error instanceof MCPError) throw error;
     if (error instanceof AuthenticationError) {
       throw new MCPError(error.message, 'AUTH_REQUIRED');
@@ -843,12 +843,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  logger.info('YouTube MCP Server bereit', {
-    cwd: process.cwd(),
-  });
+  // DO NOT log to stdout/stderr in MCP servers!
+  // logger.info('YouTube MCP Server bereit', { cwd: process.cwd() });
 }
 
-main().catch((error) => {
-  logger.error('Serverstart fehlgeschlagen', error);
+main().catch(() => {
+  // DO NOT log to stdout/stderr in MCP servers!
+  // logger.error('Serverstart fehlgeschlagen', error);
   process.exit(1);
 });

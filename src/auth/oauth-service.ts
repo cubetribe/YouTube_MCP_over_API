@@ -11,20 +11,28 @@ export interface AuthorizationUrlResult {
 }
 
 export class OAuthService {
-  private client: OAuth2Client;
+  private client: OAuth2Client | null = null;
 
   constructor() {
-    const config = oauthConfig.getConfig();
-    this.client = new google.auth.OAuth2(config.clientId, config.clientSecret, config.redirectUri);
+    // Lazy initialization - don't crash on startup
+  }
+
+  private ensureClient(): OAuth2Client {
+    if (!this.client) {
+      const config = oauthConfig.getConfig();
+      this.client = new google.auth.OAuth2(config.clientId, config.clientSecret, config.redirectUri);
+    }
+    return this.client;
   }
 
   async generateAuthorizationUrl(scopes?: string[]): Promise<AuthorizationUrlResult> {
+    const client = this.ensureClient();
     const config = oauthConfig.getConfig();
     const resolvedScopes = oauthConfig.parseScopes(scopes);
     const pkce = oauthConfig.generatePKCEPair();
     const state = oauthConfig.generateState();
 
-    const url = this.client.generateAuthUrl({
+    const url = client.generateAuthUrl({
       access_type: 'offline',
       scope: resolvedScopes,
       prompt: 'consent',
@@ -52,7 +60,8 @@ export class OAuthService {
       throw new Error('State token invalid or expired.');
     }
 
-    const { tokens } = await this.client.getToken({
+    const client = this.ensureClient();
+    const { tokens } = await client.getToken({
       code,
       codeVerifier: stored.verifier,
       redirect_uri: stored.redirectUri,
@@ -81,7 +90,8 @@ export class OAuthService {
       throw new Error('OAuth credentials not found. Run start_oauth_flow first.');
     }
 
-    this.client.setCredentials({
+    const client = this.ensureClient();
+    client.setCredentials({
       access_token: tokens.accessToken,
       refresh_token: tokens.refreshToken,
       scope: tokens.scope,
@@ -94,11 +104,12 @@ export class OAuthService {
       await this.refreshTokens();
     }
 
-    return this.client;
+    return client;
   }
 
   async refreshTokens(): Promise<StoredToken> {
-    const { credentials } = await this.client.refreshAccessToken();
+    const client = this.ensureClient();
+    const { credentials } = await client.refreshAccessToken();
     const fallback = await tokenStorage.getTokens();
     const payload: StoredToken = {
       accessToken: credentials.access_token || fallback?.accessToken || '',

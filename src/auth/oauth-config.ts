@@ -14,20 +14,33 @@ export interface PKCEPair {
 }
 
 export class OAuthConfigManager {
-  private config: OAuthConfigOptions;
+  private config: OAuthConfigOptions | null = null;
   private encryptionKey?: Buffer;
+  private initialized = false;
 
   constructor() {
-    this.config = this.loadConfig();
-    this.encryptionKey = this.initializeEncryption();
+    // Lazy initialization - don't crash on startup if env vars missing
+  }
+
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      this.config = this.loadConfig();
+      this.encryptionKey = this.initializeEncryption();
+      this.initialized = true;
+    }
   }
 
   getConfig(): OAuthConfigOptions {
-    return { ...this.config };
+    this.ensureInitialized();
+    return { ...this.config! };
   }
 
   parseScopes(scopes?: string | string[]): string[] {
-    if (!scopes) return [...this.config.scopes];
+    // Allow parsing scopes without initialization if scopes provided
+    if (!scopes) {
+      this.ensureInitialized();
+      return [...this.config!.scopes];
+    }
     if (Array.isArray(scopes)) return scopes.map(scope => scope.trim()).filter(Boolean);
     return scopes.split(',').map(scope => scope.trim()).filter(Boolean);
   }
@@ -81,7 +94,7 @@ export class OAuthConfigManager {
     const clientId = env['YOUTUBE_CLIENT_ID'] || env['GOOGLE_CLIENT_ID'];
     const clientSecret = env['YOUTUBE_CLIENT_SECRET'] || env['GOOGLE_CLIENT_SECRET'];
     if (!clientId || !clientSecret) {
-      throw new Error('Missing environment variables YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET');
+      throw new Error('OAuth not configured: Missing YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET environment variables');
     }
 
     const redirectUri = env['YOUTUBE_REDIRECT_URI'] || env['GOOGLE_REDIRECT_URI'] || 'http://localhost:3000/callback';

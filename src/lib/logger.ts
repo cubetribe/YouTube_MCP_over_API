@@ -29,7 +29,7 @@ class Logger {
       ...meta,
     };
     // eslint-disable-next-line no-console
-    console.log(JSON.stringify(payload));
+    console.error(JSON.stringify(payload));
   }
 
   private shouldLog(level: LogLevel): boolean {

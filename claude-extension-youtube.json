@@ -1,0 +1,12 @@
+{
+  "name": "YouTube MCP Extended",
+  "version": "0.0.1",
+  "description": "Local MCP server for YouTube automation (OAuth, transcripts, metadata, scheduling, playlists).",
+  "mcpServers": {
+    "youtube-extended": {
+      "command": "node",
+      "args": ["./dist/index.js"],
+      "cwd": "/Users/denniswestermann/Desktop/Coding Projekte/youtube_MetaData_MCP"
+    }
+  }
+}

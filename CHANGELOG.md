@@ -12,4 +12,5 @@ All notable changes to this project will be documented in this file.
 - Added metadata review guardrails: persisted suggestions with checklist, enforced `acknowledgedGuardrails` confirmation, and storage under `storage/metadata-suggestions/`.
 - Introduced batch orchestrator with queueing, failure handling, and `resources/subscribe`-gestützte Fortschritts-Streams for scheduling/playlist jobs.
 - Added `organize_playlists` tool for automated categorisation + playlist creation via batch orchestrator.
+- Added initial Vitest suite covering metadata suggestions, batch orchestrator, and playlist service helpers.
 - Hinweis: Release 0.0.1 ist rein manuell überprüft; automatisierte Tests und produktive Validierung stehen aus.

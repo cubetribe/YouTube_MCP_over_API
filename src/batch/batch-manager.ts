@@ -25,6 +25,10 @@ export class BatchManager {
   get(batchId: string): BatchOperation | undefined {
     return this.batches.get(batchId);
   }
+
+  clear(): void {
+    this.batches.clear();
+  }
 }
 
 export const batchManager = new BatchManager();

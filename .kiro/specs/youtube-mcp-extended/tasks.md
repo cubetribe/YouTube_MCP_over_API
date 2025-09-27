@@ -213,11 +213,11 @@
     - _Requirements: Requirement 11 (MCP Protocol standards)_
 
 - [ ] 14. Implement comprehensive testing suite
-  - [ ] 14.1 Create unit tests for core components
-    - Write unit tests for OAuth authentication system
-    - Create tests for YouTube API integration layer
-    - Add tests for metadata optimization logic
-    - Implement tests for scheduling algorithms
+- [x] 14.1 Create unit tests for core components *(Vitest: Metadata-Service, Batch-Orchestrator, Playlist-Service)*
+    - Write unit tests for OAuth authentication system *(offen)*
+    - Create tests for YouTube API integration layer *(teilweise abgedeckt durch Playlist-Service-Mocks)*
+    - Add tests for metadata optimization logic *(erledigt)*
+    - Implement tests for scheduling algorithms *(offen – Batch-Orchestrator getestet)*
     - _Requirements: All requirements validation_
 
   - [ ] 14.2 Create integration and end-to-end tests

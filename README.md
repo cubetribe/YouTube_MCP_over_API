@@ -111,6 +111,7 @@ Generate the build artefact beforehand (`npm run build:basic`). During developme
 ```bash
 npm install
 npm run build:basic
+npm test
 ```
 
 Linting requires the TypeScript ESLint presets. If you want the extra checks, install the peer dependencies and run `npm run lint` once those configs are available locally.
@@ -121,9 +122,10 @@ The project currently ships without automated tests (the previous testing harnes
 
 1. `npm run build:basic`
 2. `tsx src/index.ts` and exercise the OAuth flow
-3. Call each MCP tool through Claude to validate credentials, scheduling, Playlist-Orchestrierung (`add_videos_to_playlist` / `organize_playlists`), und den neuen Guardrail-Workflow (`generate_metadata_suggestions` → Prüfliste abarbeiten → `apply_metadata` mit `acknowledgedGuardrails=true`)
+3. `npm test` – Unit-Tests (Batch-Orchestrator, Playlist-Service, Metadata-Suggestions)
+4. Call each MCP tool through Claude to validate credentials, scheduling, Playlist-Orchestrierung (`add_videos_to_playlist` / `organize_playlists`), und den neuen Guardrail-Workflow (`generate_metadata_suggestions` → Prüfliste abarbeiten → `apply_metadata` mit `acknowledgedGuardrails=true`)
 
-> **Status:** Stand Version 0.0.1 existiert keine automatisierte oder produktive Verifizierung – bitte sämtliche Workflows manuell prüfen, bevor reale Kanäle bearbeitet werden.
+> **Status:** Stand Version 0.0.1 existieren erste Unit-Tests (Vitest), aber weiterhin keine produktive End-to-End-Verifizierung – bitte vor Änderungen am Live-Kanal alles manuell prüfen.
 
 ## Repository hygiene
 

@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { oauthConfig } from './oauth-config.js';
 
 export interface StoredToken {
@@ -19,7 +20,10 @@ export interface StoredAuthState {
   scopes: string[];
 }
 
-const TOKEN_DIR = process.env['OAUTH_STORAGE_DIR'] || path.join(process.cwd(), 'tokens');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+const TOKEN_DIR = process.env['OAUTH_STORAGE_DIR'] || path.join(PROJECT_ROOT, 'tokens');
 const TOKEN_FILE = path.join(TOKEN_DIR, 'oauth_tokens.json');
 const STATE_FILE = path.join(TOKEN_DIR, 'oauth_states.json');
 const AUTH_STATE_TTL_MS = 5 * 60 * 1000; // 5 minutes
